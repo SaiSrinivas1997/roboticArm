@@ -22,11 +22,12 @@ class GymArmEnv(gym.Env):
         # 7 joint velocities
         self.max_vel = 0.5  # rad/s
         self.action_space = spaces.Box(
-            low=-self.max_vel,
-            high=self.max_vel,
+            low=-1.0,
+            high=1.0,
             shape=(7,),
             dtype=np.float32
         )
+
 
         # ---- Observation space ----
         # [joint_pos(7), ee_pos(3), obj_pos(3)]
@@ -50,46 +51,51 @@ class GymArmEnv(gym.Env):
 
         self.joint_positions[:] = obs[:7]
         self.step_count = 0
+        self.prev_distance = self.env.compute_distance()
+
 
         return obs.astype(np.float32)
 
     def step(self, action):
         self.step_count += 1
 
-        # Clip action
-        action = np.clip(action, -self.max_vel, self.max_vel)
+        action = np.clip(action, -1.0, 1.0)
 
-        # Integrate joint positions
-        self.joint_positions += action * self.dt
+        joint_vel = action * self.max_vel
+        self.joint_positions += joint_vel * self.dt
 
-        # Step simulation
-        obs = self.env.step(self.joint_positions)
+        for _ in range(5):
+            obs = self.env.step(self.joint_positions)
 
-        # Compute reward
         dist = self.env.compute_distance()
-        reward = -dist
 
-        # Termination conditions
+        reward = self.prev_distance - dist
+        reward += 0.01
+        self.prev_distance = dist
+
         done = False
         success = False
 
         if dist < 0.05:
             done = True
             success = True
-            reward += 10.0  # success bonus
+            reward += 10.0
 
         if self.step_count >= self.max_steps:
             done = True
 
-        info = {
-            "distance": dist,
-            "success": success
-        }
+        info = {"distance": dist, "success": success}
 
         return obs.astype(np.float32), reward, done, info
+
 
     def render(self, mode="human"):
         pass
 
     def close(self):
         self.env = None
+
+    def seed(self, seed=None):
+        np.random.seed(seed)
+        return [seed]
+

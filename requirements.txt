@@ -4,3 +4,4 @@ gym
 matplotlib
 stable-baselines3
 torch
+shimmy
