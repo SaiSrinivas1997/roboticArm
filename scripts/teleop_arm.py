@@ -23,6 +23,8 @@ Joint 3: 4 / R
 Joint 4: 5 / T
 Joint 5: 6 / Y
 Joint 6: 7 / U
+Open Gripper: O
+Close Gripper: C
 SPACE: Quit
 """)
 

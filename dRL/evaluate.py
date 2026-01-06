@@ -3,13 +3,27 @@ from env.gym_arm_env import GymArmEnv
 import numpy as np
 
 env = GymArmEnv(gui=True)
-model = PPO.load("results/drl/ppo_reach")
+# model = PPO.load("results/drl/ppo_reach")
+
+model = PPO.load(
+    "results/drl/ppo_reach",
+    env=env,
+    device="cpu"   # 👈 ADD THIS
+)
+
 
 obs = env.reset()
 
 while True:
     action, _ = model.predict(obs, deterministic=True)
     print("Action:", np.round(action, 3))
+
     obs, reward, done, info = env.step(action)
+
     if done:
+        print("Episode finished")
+        print("Final distance to cube:", round(info["distance"], 4))
+        print("Success:", info["success"])
+        print("-" * 40)
+
         obs = env.reset()
