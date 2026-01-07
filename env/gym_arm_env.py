@@ -1,16 +1,10 @@
 import gym
 import numpy as np
 from gym import spaces
-
 from env.arm_env import ArmEnv
-
+import time
 
 class GymArmEnv(gym.Env):
-    """
-    Gym wrapper for ArmEnv
-    Task: Reach the cube (no grasping)
-    """
-
     metadata = {"render.modes": ["human"]}
 
     def __init__(self, gui=False):
@@ -18,97 +12,78 @@ class GymArmEnv(gym.Env):
 
         self.env = ArmEnv(gui=gui)
 
-        # -----------------------
-        # Action space
-        # -----------------------
-        # Action = small joint position deltas
+        # Action = delta end-effector position
+        self.max_vel = 0.5
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(7,),
+            shape=(3,),
             dtype=np.float32
         )
 
-        # -----------------------
-        # Observation space
-        # [joint_pos(7), ee_pos(3), obj_pos(3)]
-        # -----------------------
-        self.obs_dim = 13
+        # Observation: joint(7) + ee(3) + obj(3)
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(self.obs_dim,),
+            shape=(13,),
             dtype=np.float32
         )
 
-        # -----------------------
-        # Control parameters
-        # -----------------------
-        self.delta_scale = 0.02     # radians per step (CRITICAL)
-        self.max_steps = 200
+        self.dt = 1.0 / 240.0 
+        self.max_steps = 100
         self.step_count = 0
-
-        # Franka Panda joint limits
-        self.joint_min = np.array(
-            [-2.9, -1.8, -2.9, -3.1, -2.9, -0.1, -2.9]
-        )
-        self.joint_max = np.array(
-            [ 2.9,  1.8,  2.9,  0.0,  2.9,  3.7,  2.9]
-        )
 
         self.joint_positions = np.zeros(7)
+        self.prev_distance = None
 
-    # -----------------------
-    # Reset
-    # -----------------------
+        self.ee_target = None
+
     def reset(self):
         obs = self.env.reset()
-
         self.joint_positions = obs[:7].copy()
+        self.ee_target = obs[7:10].copy()
         self.prev_distance = self.env.compute_distance()
+        self.prev_ee_pos = obs[7:10].copy()
         self.step_count = 0
-
         return obs.astype(np.float32)
 
-    # -----------------------
-    # Step
-    # -----------------------
     def step(self, action):
         self.step_count += 1
 
-        # Clip action
+        # -----------------------
+        # Action = EE delta
+        # -----------------------
         action = np.clip(action, -1.0, 1.0)
+        ee_delta = action * 0.05   # meters per step
 
-        # Convert action → joint delta
-        delta = action * self.delta_scale
-        self.joint_positions = self.joint_positions + delta
+        # 🔥 KEY FIX: accumulate target
+        self.ee_target += ee_delta
 
-        # Enforce joint limits
-        self.joint_positions = np.clip(
-            self.joint_positions,
-            self.joint_min,
-            self.joint_max
-        )
+        # Optional Z clamp (prevents table crash)
+        self.ee_target[2] = np.clip(self.ee_target[2], 0.05, 0.8)
 
-        # Step simulation (multiple for stability)
-        for _ in range(5):
-            obs = self.env.step(self.joint_positions)
+        # Apply IK (THIS IS THE KEY LINE)
+        obs = self.env.step_ik(self.ee_target)
+
+        # Update stored state
+        self.joint_positions = obs[:7].copy()
 
         # -----------------------
         # Reward
         # -----------------------
         dist = self.env.compute_distance()
+        distance_reward = 5.0 * (self.prev_distance - dist)
 
-        # Distance improvement reward
-        reward = self.prev_distance - dist
+        ee_vel = obs[7:10] - self.prev_ee_pos
+        self.prev_ee_pos = obs[7:10].copy()
 
-        # Penalize moving away
-        if dist > self.prev_distance:
-            reward -= 0.05
+        direction = obs[10:13] - obs[7:10]
+        direction_unit = direction / (np.linalg.norm(direction) + 1e-6)
+        directional_reward = np.dot(ee_vel, direction_unit)
 
-        # Small living reward
-        reward += 0.01
+        smoothness_penalty = 0.03 * np.linalg.norm(action)
 
+        reward = distance_reward + 0.3 * directional_reward - smoothness_penalty + 0.01
         self.prev_distance = dist
 
         # -----------------------
@@ -125,20 +100,19 @@ class GymArmEnv(gym.Env):
         if self.step_count >= self.max_steps:
             done = True
 
-        info = {
-            "distance": dist,
-            "success": success
-        }
+        info = {"distance": dist, "success": success}
+
+        time.sleep(0.03)
 
         return obs.astype(np.float32), reward, done, info
 
-    # -----------------------
     def render(self, mode="human"):
         pass
 
     def close(self):
-        self.env = None
+        self.env.close()
 
     def seed(self, seed=None):
         np.random.seed(seed)
         return [seed]
+

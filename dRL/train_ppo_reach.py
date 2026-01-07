@@ -10,7 +10,7 @@ from env.gym_arm_env import GymArmEnv
 SAVE_DIR = "results/drl"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-TOTAL_TIMESTEPS = 150_000   # ⬅️ enough for reliable reach
+TOTAL_TIMESTEPS = 200_000
 
 # =========================
 # Vectorized Environment
@@ -26,21 +26,18 @@ env = make_vec_env(
 model = PPO(
     policy="MlpPolicy",
     env=env,
-    device="cpu",
+    device="cpu",              # CPU is correct for MLP
     verbose=1,
 
-    # --- PPO hyperparameters ---
-    n_steps=512,              # faster updates
+    # PPO stability (important)
+    n_steps=1024,
     batch_size=256,
     gamma=0.99,
-    gae_lambda=0.95,
     learning_rate=3e-4,
     clip_range=0.2,
 
-    # --- Policy network ---
-    policy_kwargs=dict(
-        net_arch=[256, 256]
-    )
+    # Exploration (helps early reaching)
+    ent_coef=0.01
 )
 
 # =========================

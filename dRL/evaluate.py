@@ -1,9 +1,9 @@
 from stable_baselines3 import PPO
 from env.gym_arm_env import GymArmEnv
 import numpy as np
+import time
 
 env = GymArmEnv(gui=True)
-# model = PPO.load("results/drl/ppo_reach")
 
 model = PPO.load(
     "results/drl/ppo_reach",
