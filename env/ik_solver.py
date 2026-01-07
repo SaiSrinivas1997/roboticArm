@@ -10,6 +10,8 @@ class IKSolver:
         self.lower_limits = [-2.9, -1.8, -2.9, -3.0, -2.9, -0.1, -2.9]
         self.upper_limits = [ 2.9,  1.8,  2.9,  0.0,  2.9,  3.7,  2.9]
         self.joint_ranges = [u - l for u, l in zip(self.upper_limits, self.lower_limits)]
+        self.rest_pose = [0.0, -0.6, 0.0, -2.0, 0.0, 1.6, 0.8]
+
 
     def solve(self, target_ee_pos, current_joint_pos):
         joint_targets = p.calculateInverseKinematics(
@@ -19,7 +21,7 @@ class IKSolver:
             lowerLimits=self.lower_limits,
             upperLimits=self.upper_limits,
             jointRanges=self.joint_ranges,
-            restPoses=current_joint_pos.tolist(),
+            restPoses=self.rest_pose,
             maxNumIterations=50,
             residualThreshold=1e-4
         )
