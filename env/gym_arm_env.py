@@ -13,7 +13,7 @@ class GymArmEnv(gym.Env):
         self.env = ArmEnv(gui=gui)
 
         # Action = delta end-effector position
-        self.max_vel = 0.5
+        # self.max_vel = 0.5
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -54,16 +54,19 @@ class GymArmEnv(gym.Env):
         # Action = EE delta
         # -----------------------
         action = np.clip(action, -1.0, 1.0)
-        ee_delta = action * 0.05   # meters per step
+        ee_delta = action * 0.01   # meters per step
 
         # 🔥 KEY FIX: accumulate target
         self.ee_target += ee_delta
 
         # Optional Z clamp (prevents table crash)
-        self.ee_target[2] = np.clip(self.ee_target[2], 0.05, 0.8)
+        self.ee_target[0] = np.clip(self.ee_target[0], 0.3, 0.8)
+        self.ee_target[1] = np.clip(self.ee_target[1], -0.4, 0.4)
+        self.ee_target[2] = np.clip(self.ee_target[2], 0.03, 0.6)
+
 
         # Apply IK (THIS IS THE KEY LINE)
-        obs = self.env.step_ik(self.ee_target)
+        obs = self.env.step_ik(self.ee_target, self.joint_positions)
 
         # Update stored state
         self.joint_positions = obs[:7].copy()
@@ -72,7 +75,8 @@ class GymArmEnv(gym.Env):
         # Reward
         # -----------------------
         dist = self.env.compute_distance()
-        distance_reward = 5.0 * (self.prev_distance - dist)
+        distance_reward = (10.0 if dist > 0.15 else 5.0) * (self.prev_distance - dist)
+
 
         ee_vel = obs[7:10] - self.prev_ee_pos
         self.prev_ee_pos = obs[7:10].copy()
@@ -81,10 +85,36 @@ class GymArmEnv(gym.Env):
         direction_unit = direction / (np.linalg.norm(direction) + 1e-6)
         directional_reward = np.dot(ee_vel, direction_unit)
 
-        smoothness_penalty = 0.03 * np.linalg.norm(action)
+        # -----------------------
+        # Z-specific incentive (KEY FIX)
+        # -----------------------
+        ee_z = obs[9]        # ee_pos[2]
+        obj_z = obs[12]      # obj_pos[2]
 
-        reward = distance_reward + 0.3 * directional_reward - smoothness_penalty + 0.01
+        z_error = ee_z - obj_z
+
+        # Penalize being above the cube
+        z_reward = -2.0 * abs(z_error)
+
+        # Extra encouragement to go DOWN when close
+        if dist < 0.25:
+            z_reward += 1.5 * (self.prev_ee_pos[2] - ee_z)
+
+
+        if dist < 0.2:
+            smoothness_penalty = 0.005 * np.linalg.norm(action)
+        else:
+            smoothness_penalty = 0.03 * np.linalg.norm(action)
+
+        reward = distance_reward + 0.3 * directional_reward +z_reward - smoothness_penalty + 0.01
         self.prev_distance = dist
+
+        if dist < 0.15:
+            reward += 1.0
+        if dist < 0.10:
+            reward += 2.0
+        if dist < 0.07:
+            reward += 3.0
 
         # -----------------------
         # Termination
@@ -102,7 +132,7 @@ class GymArmEnv(gym.Env):
 
         info = {"distance": dist, "success": success}
 
-        time.sleep(0.03)
+        #time.sleep(0.03)
 
         return obs.astype(np.float32), reward, done, info
 

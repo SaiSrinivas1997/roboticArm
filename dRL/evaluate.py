@@ -19,6 +19,7 @@ while True:
     print("Action:", np.round(action, 3))
 
     obs, reward, done, info = env.step(action)
+    time.sleep(0.03)
 
     if done:
         print("Episode finished")

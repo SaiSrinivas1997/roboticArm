@@ -10,7 +10,7 @@ from env.gym_arm_env import GymArmEnv
 SAVE_DIR = "results/drl"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-TOTAL_TIMESTEPS = 200_000
+TOTAL_TIMESTEPS = 50_000
 
 # =========================
 # Vectorized Environment

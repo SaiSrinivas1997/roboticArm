@@ -12,12 +12,10 @@ class ArmEnv:
         p.setTimeStep(1.0 / 1000.0)
 
         self.plane = p.loadURDF("plane.urdf")
-
         self.robot = p.loadURDF(
             "franka_panda/panda.urdf",
             useFixedBase=True
         )
-
         self.object = p.loadURDF(
             "cube_small.urdf",
             [0.6, 0.0, 0.03]
@@ -59,18 +57,8 @@ class ArmEnv:
         p.stepSimulation()
         return self.get_observation()
 
-    def step_ik(self, target_ee_pos):
-        joint_targets = self.ik.solve(target_ee_pos)
-        for i, j in enumerate(self.arm_joints):
-            p.setJointMotorControl2(
-                self.robot,
-                j,
-                p.POSITION_CONTROL,
-                targetPosition=joint_targets[i],
-                force=200
-            )
-
-        p.stepSimulation()
+    def step_ik(self, target_ee_pos, current_joint_pos):
+        joint_targets = self.ik.solve(target_ee_pos, current_joint_pos)
         return self.step_joints(joint_targets)
 
     def get_observation(self):

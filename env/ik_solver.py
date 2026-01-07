@@ -6,11 +6,22 @@ class IKSolver:
         self.ee_link = ee_link
         self.arm_joints = arm_joints
 
-    def solve(self, target_ee_pos):
+        # Panda joint limits (safe)
+        self.lower_limits = [-2.9, -1.8, -2.9, -3.0, -2.9, -0.1, -2.9]
+        self.upper_limits = [ 2.9,  1.8,  2.9,  0.0,  2.9,  3.7,  2.9]
+        self.joint_ranges = [u - l for u, l in zip(self.upper_limits, self.lower_limits)]
+
+    def solve(self, target_ee_pos, current_joint_pos):
         joint_targets = p.calculateInverseKinematics(
             self.robot_id,
             self.ee_link,
-            target_ee_pos
+            target_ee_pos,
+            lowerLimits=self.lower_limits,
+            upperLimits=self.upper_limits,
+            jointRanges=self.joint_ranges,
+            restPoses=current_joint_pos.tolist(),
+            maxNumIterations=50,
+            residualThreshold=1e-4
         )
 
         # Return only arm joints (ignore gripper)
