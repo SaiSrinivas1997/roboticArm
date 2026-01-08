@@ -16,7 +16,7 @@ TOTAL_TIMESTEPS = 50_000
 # Vectorized Environment
 # =========================
 env = make_vec_env(
-    lambda: GymArmEnv(gui=False),
+    lambda: GymArmEnv(gui=False, stage=GymArmEnv.STAGE_FULL),
     n_envs=4
 )
 

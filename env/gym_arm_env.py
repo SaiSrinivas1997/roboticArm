@@ -7,18 +7,23 @@ from env.arm_env import ArmEnv
 class GymArmEnv(gym.Env):
     metadata = {"render.modes": ["human"]}
 
-    def __init__(self, gui=False):
+    # ===============================
+    # Curriculum configuration
+    # ===============================
+    STAGE_XY_ONLY = 1
+    STAGE_ADD_Z   = 2
+    STAGE_FULL    = 3
+
+    def __init__(self, gui=False, stage=STAGE_XY_ONLY):
         super().__init__()
 
-        # -----------------------
-        # Low-level environment
-        # -----------------------
         self.env = ArmEnv(gui=gui)
 
-        # -----------------------
-        # Action & Observation
-        # -----------------------
-        # Action: delta end-effector (x, y, z)
+        # -------- Curriculum stage --------
+        self.stage = stage
+
+        # -------- Action space --------
+        # Always keep (3,) for PPO compatibility
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -26,7 +31,7 @@ class GymArmEnv(gym.Env):
             dtype=np.float32
         )
 
-        # Observation: joint(7) + ee(3) + obj(3)
+        # -------- Observation --------
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -34,24 +39,23 @@ class GymArmEnv(gym.Env):
             dtype=np.float32
         )
 
-        # -----------------------
-        # Episode params
-        # -----------------------
-        self.max_steps = 100
+        # -------- Episode --------
+        self.max_steps = 120
         self.step_count = 0
 
-        # -----------------------
-        # Internal state
-        # -----------------------
+        # -------- State --------
         self.joint_positions = np.zeros(7)
         self.ee_target = None
 
         self.prev_distance = None
         self.prev_ee_pos = None
 
-    # =========================================================
+        # -------- Commitment --------
+        self.commitment_active = False
+
+    # =====================================================
     # Gym API
-    # =========================================================
+    # =====================================================
 
     def reset(self):
         obs = self.env.reset()
@@ -62,7 +66,9 @@ class GymArmEnv(gym.Env):
         self.prev_distance = self.env.compute_distance()
         self.prev_ee_pos = obs[7:10].copy()
 
+        self.commitment_active = False
         self.step_count = 0
+
         return obs.astype(np.float32)
 
     def step(self, action):
@@ -70,18 +76,17 @@ class GymArmEnv(gym.Env):
 
         self._apply_action(action)
         obs = self._simulate()
+
         reward = self._compute_reward(obs)
         done, success = self._check_done()
 
         info = {
             "distance": self.prev_distance,
-            "success": success
+            "success": success,
+            "stage": self.stage
         }
 
         return obs.astype(np.float32), reward, done, info
-
-    def render(self, mode="human"):
-        pass
 
     def close(self):
         self.env.close()
@@ -90,65 +95,52 @@ class GymArmEnv(gym.Env):
         np.random.seed(seed)
         return [seed]
 
-    # =========================================================
-    # Internal helpers
-    # =========================================================
+    # =====================================================
+    # Action handling
+    # =====================================================
 
     def _apply_action(self, action):
-        """Convert RL action → EE target update"""
         action = np.clip(action, -1.0, 1.0)
-        ee_delta = action * 0.01  # meters per step
+
+        # -------- STAGE 1: XY ONLY --------
+        if self.stage == self.STAGE_XY_ONLY:
+            ee_delta = np.array([action[0], action[1], 0.0]) * 0.015
+
+        # -------- STAGE 2+: Z allowed near cube --------
+        else:
+            ee_delta = action * 0.015
+
+            # Z only allowed when close
+            if self.prev_distance > 0.25:
+                ee_delta[2] = 0.0
 
         self.ee_target += ee_delta
 
-        # Workspace limits (VERY important)
+        # -------- Workspace limits --------
         self.ee_target[0] = np.clip(self.ee_target[0], 0.3, 0.8)
         self.ee_target[1] = np.clip(self.ee_target[1], -0.4, 0.4)
-        self.ee_target[2] = np.clip(self.ee_target[2], 0.03, 0.6)
+        self.ee_target[2] = np.clip(self.ee_target[2], 0.05, 0.6)
+
+    # =====================================================
+    # Simulation
+    # =====================================================
 
     def _simulate(self):
-        """Run IK + physics"""
         obs = self.env.step_ik(self.ee_target, self.joint_positions)
         self.joint_positions = obs[:7].copy()
         return obs
 
-    # =========================================================
-    # Reward functions
-    # =========================================================
+    # =====================================================
+    # Reward
+    # =====================================================
 
     def _compute_reward(self, obs):
         dist = self.env.compute_distance()
 
-        distance_reward = self._distance_reward(dist)
-        directional_reward = self._directional_reward(obs)
-        z_reward = self._z_reward(obs, dist)
-        smoothness_penalty = self._smoothness_penalty()
+        # -------- Distance reward --------
+        distance_reward = 6.0 * (self.prev_distance - dist)
 
-        reward = (
-            distance_reward
-            + 0.3 * directional_reward
-            + z_reward
-            - smoothness_penalty
-            + 0.01
-        )
-
-        self.prev_distance = dist
-        return reward
-
-    def _distance_reward(self, dist):
-        scale = 10.0 if dist > 0.15 else 5.0
-        reward = scale * (self.prev_distance - dist)
-
-        if dist < 0.15:
-            reward += 1.0
-        if dist < 0.10:
-            reward += 2.0
-        if dist < 0.07:
-            reward += 3.0
-
-        return reward
-
-    def _directional_reward(self, obs):
+        # -------- Direction reward --------
         ee_pos = obs[7:10]
         obj_pos = obs[10:13]
 
@@ -157,28 +149,43 @@ class GymArmEnv(gym.Env):
 
         direction = obj_pos - ee_pos
         direction_unit = direction / (np.linalg.norm(direction) + 1e-6)
+        directional_reward = np.dot(ee_vel, direction_unit)
 
-        return np.dot(ee_vel, direction_unit)
+        reward = distance_reward + 0.3 * directional_reward
 
-    def _z_reward(self, obs, dist):
-        ee_z = obs[9]
-        obj_z = obs[12]
+        # -------- STAGE 2: Z encouragement --------
+        if self.stage >= self.STAGE_ADD_Z and dist < 0.25:
+            reward += 2.5 * max(0.0, self.prev_ee_pos[2] - ee_pos[2])
 
-        z_error = ee_z - obj_z
-        reward = -2.0 * abs(z_error)
+        # -------- STAGE 3: Commitment --------
+        if self.stage == self.STAGE_FULL:
+            if dist < 0.12:
+                self.commitment_active = True
 
-        # Encourage downward motion when close
-        if dist < 0.25:
-            reward += 1.5 * (self.prev_ee_pos[2] - ee_z)
+            if self.commitment_active:
+                if dist > self.prev_distance + 0.01:
+                    reward -= 1.0  # punish backing off
 
-        return reward
+            # Smoothness penalty (ONLY HERE)
+            if ee_vel[2] > 0:   # only penalize upward / sideways jitter
+                reward -= 0.02 * np.linalg.norm(ee_vel)
+            if dist < 0.15:
+                reward += 3.0 * max(0.0, self.prev_ee_pos[2] - ee_pos[2])
 
-    def _smoothness_penalty(self):
-        return 0.02 * np.linalg.norm(self.ee_target - self.prev_ee_pos)
+        # -------- Success bonuses --------
+        if dist < 0.15:
+            reward += 1.0
+        if dist < 0.10:
+            reward += 2.0
+        if dist < 0.07:
+            reward += 3.0
 
-    # =========================================================
+        self.prev_distance = dist
+        return reward + 0.01
+
+    # =====================================================
     # Termination
-    # =========================================================
+    # =====================================================
 
     def _check_done(self):
         success = False
