@@ -20,7 +20,8 @@ class GymArmEnv(gym.Env):
         self.env = ArmEnv(gui=gui)
 
         # -------- Curriculum stage --------
-        self.stage = stage
+        # self.stage = stage
+        self.stage = GymArmEnv.STAGE_ADD_Z
 
         # -------- Action space --------
         # Always keep (3,) for PPO compatibility
@@ -102,24 +103,27 @@ class GymArmEnv(gym.Env):
     def _apply_action(self, action):
         action = np.clip(action, -1.0, 1.0)
 
+        if self.prev_distance < 0.4:
+            action[0] *= 0.3
+            action[1] *= 0.3
+
         # -------- STAGE 1: XY ONLY --------
         if self.stage == self.STAGE_XY_ONLY:
             ee_delta = np.array([action[0], action[1], 0.0]) * 0.015
 
         # -------- STAGE 2+: Z allowed near cube --------
         else:
-            ee_delta = action * 0.015
+            ee_delta = action * 0.01
+            ee_delta[2] = np.clip(ee_delta[2], -0.006, 0.004)
 
-            # Z only allowed when close
-            if self.prev_distance > 0.25:
-                ee_delta[2] = 0.0
+
 
         self.ee_target += ee_delta
 
         # -------- Workspace limits --------
-        self.ee_target[0] = np.clip(self.ee_target[0], 0.3, 0.8)
-        self.ee_target[1] = np.clip(self.ee_target[1], -0.4, 0.4)
-        self.ee_target[2] = np.clip(self.ee_target[2], 0.05, 0.6)
+        self.ee_target[0] = np.clip(self.ee_target[0], 0.3, 0.7)
+        self.ee_target[1] = np.clip(self.ee_target[1], -0.3, 0.3)
+        self.ee_target[2] = np.clip(self.ee_target[2], 0.02, 0.8)
 
     # =====================================================
     # Simulation
@@ -127,6 +131,8 @@ class GymArmEnv(gym.Env):
 
     def _simulate(self):
         obs = self.env.step_ik(self.ee_target, self.joint_positions)
+        obs[7]  = np.clip(obs[7],  0.3, 0.75)
+        obs[8]  = np.clip(obs[8], -0.35, 0.35)
         self.joint_positions = obs[:7].copy()
         return obs
 
@@ -137,42 +143,39 @@ class GymArmEnv(gym.Env):
     def _compute_reward(self, obs):
         dist = self.env.compute_distance()
 
-        # -------- Distance reward --------
-        distance_reward = 6.0 * (self.prev_distance - dist)
-
-        # -------- Direction reward --------
         ee_pos = obs[7:10]
         obj_pos = obs[10:13]
 
         ee_vel = ee_pos - self.prev_ee_pos
-        self.prev_ee_pos = ee_pos.copy()
 
         direction = obj_pos - ee_pos
         direction_unit = direction / (np.linalg.norm(direction) + 1e-6)
         directional_reward = np.dot(ee_vel, direction_unit)
 
+        distance_reward = 6.0 * (self.prev_distance - dist)
+
         reward = distance_reward + 0.3 * directional_reward
 
-        # -------- STAGE 2: Z encouragement --------
-        if self.stage >= self.STAGE_ADD_Z and dist < 0.25:
-            reward += 2.5 * max(0.0, self.prev_ee_pos[2] - ee_pos[2])
+        # Z descent encouragement
+        if dist < 0.3:
+            reward += 8.0 * max(0.0, self.prev_ee_pos[2] - ee_pos[2])
 
-        # -------- STAGE 3: Commitment --------
+        # Final touch encouragement
+        if dist < 0.12:
+            reward += 6.0 * max(0.0, obj_pos[2] + 0.02 - ee_pos[2])
+
+        # Commitment
         if self.stage == self.STAGE_FULL:
             if dist < 0.12:
                 self.commitment_active = True
 
-            if self.commitment_active:
-                if dist > self.prev_distance + 0.01:
-                    reward -= 1.0  # punish backing off
+            if self.commitment_active and dist > self.prev_distance + 0.01:
+                reward -= 1.0
 
-            # Smoothness penalty (ONLY HERE)
-            if ee_vel[2] > 0:   # only penalize upward / sideways jitter
-                reward -= 0.02 * np.linalg.norm(ee_vel)
             if dist < 0.15:
                 reward += 3.0 * max(0.0, self.prev_ee_pos[2] - ee_pos[2])
 
-        # -------- Success bonuses --------
+        # Success bonuses
         if dist < 0.15:
             reward += 1.0
         if dist < 0.10:
@@ -180,8 +183,19 @@ class GymArmEnv(gym.Env):
         if dist < 0.07:
             reward += 3.0
 
+        if dist < 0.05 and abs(ee_pos[2] - obj_pos[2]) < 0.03:
+            reward += 50.0
+
+        self.prev_ee_pos = ee_pos.copy()
         self.prev_distance = dist
+
+        if self.step_count % 20 == 0:
+            print(
+                f"[DEBUG] dist={dist:.3f}, ee={ee_pos.round(3)}, obj={obj_pos.round(3)}, vel={ee_vel.round(3)}"
+            )
+
         return reward + 0.01
+
 
     # =====================================================
     # Termination
@@ -191,7 +205,10 @@ class GymArmEnv(gym.Env):
         success = False
         done = False
 
-        if self.prev_distance < 0.05:
+        ee_z = self.prev_ee_pos[2]
+        obj_z = self.env.get_observation()[12]
+
+        if self.prev_distance < 0.05 and abs(ee_z - obj_z) < 0.03:
             success = True
             done = True
 

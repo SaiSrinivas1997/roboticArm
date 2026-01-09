@@ -79,7 +79,7 @@ while True:
     # Integrate position manually
     joint_positions += joint_vel * dt
 
-    env.step(joint_positions)
+    env.step_joints(joint_positions)
     time.sleep(dt)
 
 

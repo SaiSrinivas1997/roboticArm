@@ -10,14 +10,14 @@ from env.gym_arm_env import GymArmEnv
 SAVE_DIR = "results/drl"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-TOTAL_TIMESTEPS = 50_000
+TOTAL_TIMESTEPS = 150_000
 
 # =========================
 # Vectorized Environment
 # =========================
 env = make_vec_env(
     lambda: GymArmEnv(gui=False, stage=GymArmEnv.STAGE_FULL),
-    n_envs=4
+    n_envs=1
 )
 
 # =========================

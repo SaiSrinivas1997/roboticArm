@@ -1,10 +1,11 @@
 import pybullet as p
 
 class IKSolver:
-    def __init__(self, robot_id, ee_link, arm_joints):
+    def __init__(self, robot_id, ee_link, arm_joints, cid):
         self.robot_id = robot_id
         self.ee_link = ee_link
         self.arm_joints = arm_joints
+        self.cid = cid
 
         # Panda joint limits (safe)
         self.lower_limits = [-2.9, -1.8, -2.9, -3.0, -2.9, -0.1, -2.9]
@@ -18,10 +19,11 @@ class IKSolver:
             self.robot_id,
             self.ee_link,
             target_ee_pos,
+            physicsClientId=self.cid,
             lowerLimits=self.lower_limits,
             upperLimits=self.upper_limits,
             jointRanges=self.joint_ranges,
-            restPoses=self.rest_pose,
+            restPoses=current_joint_pos,
             maxNumIterations=50,
             residualThreshold=1e-4
         )

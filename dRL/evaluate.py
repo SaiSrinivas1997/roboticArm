@@ -3,7 +3,7 @@ from env.gym_arm_env import GymArmEnv
 import numpy as np
 import time
 
-env = GymArmEnv(gui=True)
+env = GymArmEnv(gui=True, stage=GymArmEnv.STAGE_FULL)
 
 model = PPO.load(
     "results/drl/ppo_reach",
@@ -19,7 +19,7 @@ while True:
     print("Action:", np.round(action, 3))
 
     obs, reward, done, info = env.step(action)
-    time.sleep(0.03)
+    time.sleep(0.06)
 
     if done:
         print("Episode finished")
@@ -27,4 +27,4 @@ while True:
         print("Success:", info["success"])
         print("-" * 40)
 
-        obs = env.reset()
+        # obs = env.reset()
