@@ -1,4 +1,5 @@
 import pybullet as p
+import numpy as np
 
 class IKSolver:
     def __init__(self, robot_id, ee_link, arm_joints, cid):
@@ -14,19 +15,42 @@ class IKSolver:
         self.rest_pose = [0.0, -0.6, 0.0, -2.0, 0.0, 1.6, 0.8]
 
 
-    def solve(self, target_ee_pos, current_joint_pos):
+    def solve(self, target_ee_pos, current_joint_pos, obj_pos=None):
+
+        desired_orn = p.getQuaternionFromEuler([np.pi, 0, np.pi/2])
+
+        rest = list(current_joint_pos)
+
+        # ---- ELBOW BIAS LOGIC ----
+        if obj_pos is not None:
+            dist = np.linalg.norm(target_ee_pos - obj_pos)
+
+            if dist < 0.12:
+                rest[3] = -2.2   # bend elbow when near
+            else:
+                rest[3] = -0.6   # relaxed when far
+
         joint_targets = p.calculateInverseKinematics(
             self.robot_id,
             self.ee_link,
             target_ee_pos,
-            physicsClientId=self.cid,
+            desired_orn,
             lowerLimits=self.lower_limits,
             upperLimits=self.upper_limits,
             jointRanges=self.joint_ranges,
-            restPoses=current_joint_pos,
-            maxNumIterations=50,
-            residualThreshold=1e-4
+            restPoses=rest,
+            maxNumIterations=120,
+            residualThreshold=1e-5,
+            physicsClientId=self.cid
         )
 
-        # Return only arm joints (ignore gripper)
         return joint_targets[:len(self.arm_joints)]
+
+
+
+
+
+
+
+
+
