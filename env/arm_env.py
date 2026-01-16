@@ -44,12 +44,11 @@ class ArmEnv:
             physicsClientId=self.cid
         )
 
-        num = p.getNumJoints(self.robot, physicsClientId=self.cid)
+        # num = p.getNumJoints(self.robot, physicsClientId=self.cid)
 
-        for i in range(num):
-            info = p.getJointInfo(self.robot, i, physicsClientId=self.cid)
-            print(i, info[1].decode("utf-8"))
-
+        # for i in range(num):
+        #     info = p.getJointInfo(self.robot, i, physicsClientId=self.cid)
+        #     print(i, info[1].decode("utf-8"))
 
         # Franka Panda
         self.arm_joints = list(range(7))
@@ -88,6 +87,7 @@ class ArmEnv:
             p.resetJointState(self.robot, j, 0.04, physicsClientId=self.cid)
 
         p.stepSimulation(physicsClientId=self.cid)
+
         return self.get_observation()
 
     def step_joints(self, joint_targets):

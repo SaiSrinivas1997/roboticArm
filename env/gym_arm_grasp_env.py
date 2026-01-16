@@ -29,6 +29,8 @@ class GymArmGraspEnv(gym.Env):
         self.step_count = 0
 
         self.ee_target = None
+        self.grasp_phase = "approach"
+        self.hold_steps = 0
 
     # -------------------------------------------------
 
@@ -42,7 +44,9 @@ class GymArmGraspEnv(gym.Env):
 
         self.joint_positions = obs[:7].copy()
         self.step_count = 0
+
         self.hold_steps = 0
+        self.grasp_phase = "approach"
 
         return obs.astype(np.float32)
 
@@ -68,61 +72,82 @@ class GymArmGraspEnv(gym.Env):
             self.hold_steps = 0
 
         # -------------------------
-        # X CONTROL (PPO)
+        # PHASE LOGIC
         # -------------------------
-        self.ee_target[0] += 0.002 * x_cmd
-
-        # -------------------------
-        # Y CONTROL (servo)
-        # -------------------------
-        dy = obj_pos[1] - ee_pos[1]
-        dy = np.clip(dy, -0.002, 0.002)
-        self.ee_target[1] = ee_pos[1] + dy
-
-        # -------------------------
-        # Z CONTROL
-        # -------------------------
-        xy_dist = np.linalg.norm(self.ee_target[:2] - obj_pos[:2])
-
-        if self.env.is_grasping():
-            self.ee_target[2] += 0.002
+        if self.hold_steps > 12:
+            phase = "lift"
+        elif self.hold_steps > 4:
+            phase = "settle"
         else:
+            phase = "approach"
+
+        # -------------------------
+        # MOTION CONTROL
+        # -------------------------
+        xy_dist = np.linalg.norm(ee_pos[:2] - obj_pos[:2])
+
+        if phase == "approach":
+            self.ee_target[0] += 0.002 * x_cmd
+
+            dy = obj_pos[1] - ee_pos[1]
+            dy = np.clip(dy, -0.002, 0.002)
+            self.ee_target[1] = ee_pos[1] + dy
+
             if xy_dist < 0.01:
-                self.ee_target[2] -= 0.002
+                self.ee_target[2] -= 0.0015
+
+        elif phase == "settle":
+            # freeze motion to stabilize grasp
+            self.ee_target[:] = ee_pos
+
+        elif phase == "lift":
+            self.ee_target[2] += 0.0008
 
         self.ee_target[2] = np.clip(self.ee_target[2], 0.02, 0.25)
 
         # -------------------------
-        # GRIPPER
+        # GRIPPER (sticky)
         # -------------------------
-        if grip_cmd > 0 and xy_dist < 0.01 and abs(ee_pos[2]-obj_pos[2]) < 0.015:
+        centered = np.linalg.norm(ee_pos[:2] - obj_pos[:2]) < 0.006
+        height_ok = abs(ee_pos[2] - obj_pos[2]) < 0.015
+
+        if centered and height_ok:
             self.env.close_gripper()
-            for _ in range(8):
-                p.stepSimulation()
         else:
             self.env.open_gripper()
 
+        if self.env.is_grasping():
+            self.ee_target[0] = ee_pos[0]
+            self.ee_target[1] = ee_pos[1]
+
         # -------------------------
-        # IK TARGET OFFSET
+        # IK TARGET
         # -------------------------
         target = self.ee_target.copy()
-        target[2] -= 0.05   # panda fingertip offset
+        if not self.env.is_grasping():
+            target[2] = obj_pos[2] + 0.06
 
         obs = self.env.step_ik(target, self.joint_positions)
         self.joint_positions = obs[:7].copy()
+
+        if not self.env.is_grasping():
+            p.applyExternalForce(self.env.object, -1, [0,0,-0.5], [0,0,0], p.WORLD_FRAME)
+
 
         reward = self._compute_reward(obs)
         done, success = self._check_done()
 
         info = {
             "grasped": self.env.is_grasping(),
-            "success": success
+            "success": success,
+            "phase": phase
         }
 
         if self.step_count % 20 == 0:
-            print(f"[DBG] ee={obs[7:10].round(3)}, target={self.ee_target.round(3)}, grasped={info['grasped']}")
+            print(f"[DBG] phase={phase}, ee={obs[7:10].round(3)}, grasped={info['grasped']}")
 
         return obs.astype(np.float32), reward, done, info
+
 
     # -------------------------------------------------
 

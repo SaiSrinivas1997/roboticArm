@@ -17,18 +17,19 @@ class IKSolver:
 
     def solve(self, target_ee_pos, current_joint_pos, obj_pos=None):
 
+        # Top-down stable orientation
         desired_orn = p.getQuaternionFromEuler([np.pi, 0, np.pi/2])
 
         rest = list(current_joint_pos)
 
-        # ---- ELBOW BIAS LOGIC ----
         if obj_pos is not None:
-            dist = np.linalg.norm(target_ee_pos - obj_pos)
+            xy_dist = np.linalg.norm(target_ee_pos[:2] - obj_pos[:2])
 
-            if dist < 0.12:
-                rest[3] = -2.2   # bend elbow when near
+            # Smooth elbow bias
+            if xy_dist < 0.10:
+                rest[3] = -2.2   # strong bend near object
             else:
-                rest[3] = -0.6   # relaxed when far
+                rest[3] = -1.2   # mild bend far away
 
         joint_targets = p.calculateInverseKinematics(
             self.robot_id,
@@ -39,12 +40,13 @@ class IKSolver:
             upperLimits=self.upper_limits,
             jointRanges=self.joint_ranges,
             restPoses=rest,
-            maxNumIterations=120,
+            maxNumIterations=150,
             residualThreshold=1e-5,
             physicsClientId=self.cid
         )
 
         return joint_targets[:len(self.arm_joints)]
+
 
 
 
